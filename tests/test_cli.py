@@ -114,6 +114,23 @@ class AccountingTests(unittest.TestCase):
         self.ingest(1002, a, b, c)
         self.assertEqual(len(cli.groups(self.db, "domain")), 3)
 
+    def test_legacy_trailing_colon_does_not_split_same_rule(self):
+        self.ingest(1000)
+        a = connection(up=10, down=20, start=1001, rule="Match", payload="")
+        b = connection(cid="b", up=30, down=40, start=1001, rule="Match:", payload="")
+        self.ingest(1002, a, b)
+        rows = cli.groups(self.db, "domain")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            (rows[0]["rule"], rows[0]["up"], rows[0]["down"]), ("Match", 40, 60)
+        )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM segments").fetchone()[0], 2
+        )
+        self.assertEqual(
+            len(cli.groups(self.db, "domain", hours=time.time() / 3600 + 1)), 1
+        )
+
     def test_close_resume_and_counter_rollback(self):
         self.ingest(1000)
         self.ingest(1002, connection(up=10, down=20, start=1001))

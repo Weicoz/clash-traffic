@@ -396,18 +396,22 @@ def date(n):
     )
 
 
+# Legacy empty payloads used a trailing colon; retain raw records but group equivalent labels.
+RULE_KEY = "CASE WHEN instr(rule, ':') = length(rule) THEN substr(rule,1,length(rule)-1) ELSE rule END"
+
+
 def groups(db, group, hours=None):
     column = {
         "domain": "domain",
         "protocol": "protocol",
         "process": "process",
         "chain": "chain",
-        "rule": "rule",
+        "rule": RULE_KEY,
         "inbound": "inbound",
     }[group]
     where = "1=1" if group == "inbound" else "inbound!='Inner'"
-    extra = ",rule,chain,protocol" if group == "domain" else ""
-    grouped = column + extra
+    extra = f",{RULE_KEY} rule,chain,protocol" if group == "domain" else ""
+    grouped = column + (f",{RULE_KEY},chain,protocol" if group == "domain" else "")
     if hours:
         return db.execute(
             f"SELECT {column} name{extra},SUM(up) up,SUM(down) down,0 count,0 seconds,MIN(minute) first,MAX(minute) last FROM buckets WHERE {where} AND minute>=? GROUP BY {grouped} ORDER BY SUM(up+down) DESC",
@@ -601,9 +605,9 @@ def live_table(db, limit=20):
         " | ".join(fit(h, w) for h, w in zip(headers, widths)),
     ]
     rows = db.execute(
-        """SELECT domain,rule,chain,protocol,SUM(up) up,SUM(down) down,
+        f"""SELECT domain,{RULE_KEY} rule,chain,protocol,SUM(up) up,SUM(down) down,
         SUM(MAX(0,last-first)) seconds FROM segments WHERE inbound!='Inner'
-        GROUP BY domain,rule,chain,protocol ORDER BY SUM(up+down) DESC LIMIT ?""",
+        GROUP BY domain,{RULE_KEY},chain,protocol ORDER BY SUM(up+down) DESC LIMIT ?""",
         (limit,),
     ).fetchall()
     for row in rows:
