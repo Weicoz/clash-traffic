@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clash-traffic"
+version = "0.1.0"
+description = "Local traffic accounting and live tables for Clash-compatible controllers"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Weicoz"}]
+readme = "README.md"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Weicoz/clash-traffic"
+Issues = "https://github.com/Weicoz/clash-traffic/issues"
+
+[project.scripts]
+clash-traffic = "clash_traffic.cli:main"
+bett-traffic = "clash_traffic.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

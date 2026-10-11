@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+*.sqlite3*
+*.db*
+config.json
+collector.jsonl
+collector.lock
+stop
+report.html
+connections.csv
+*.bak*
+.env*
+.DS_Store
