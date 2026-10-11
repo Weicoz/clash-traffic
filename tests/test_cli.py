@@ -182,7 +182,7 @@ class AccountingTests(unittest.TestCase):
         self.ingest(1000)
         self.ingest(1002, connection(up=8, down=9, start=1001, chain="<script>"))
         path = cli.report(self.db)
-        page = path.read_text()
+        page = path.read_text(encoding="utf-8")
         self.assertIn("<th>命中规则</th><th>实际节点链</th><th>协议</th>", page)
         self.assertIn("&lt;script&gt;", page)
         self.assertNotIn("<td><script>", page)
@@ -241,10 +241,19 @@ class AccountingTests(unittest.TestCase):
         self.ingest(1002, c)
         with redirect_stdout(io.StringIO()):
             cli.run(["export", "--data-dir", str(cli.ROOT)])
-        self.assertIn("'=1+1", (cli.ROOT / "connections.csv").read_text())
+        self.assertIn(
+            "'=1+1", (cli.ROOT / "connections.csv").read_text(encoding="utf-8")
+        )
 
 
 class TransportTests(unittest.TestCase):
+    def test_epoch_time_and_unicode_export_are_cross_platform(self):
+        self.assertRegex(cli.date(1000), r"\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "utf8.txt"
+            cli.atomic(path, "中文规则 → 节点")
+            self.assertEqual(path.read_bytes(), "中文规则 → 节点".encode("utf-8"))
+
     def test_endpoint_boundaries(self):
         for url in [
             "http://127.0.0.1:9090",

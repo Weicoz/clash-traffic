@@ -158,7 +158,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def settings(endpoint=None, secret_env=None):
     value = (
-        json.loads((ROOT / "config.json").read_text())
+        json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         if (ROOT / "config.json").exists()
         else {}
     )
@@ -388,7 +388,9 @@ def fmt(n):
 
 def date(n):
     return (
-        dt.datetime.fromtimestamp(n).astimezone().strftime("%m-%d %H:%M:%S")
+        dt.datetime.fromtimestamp(n, dt.timezone.utc)
+        .astimezone()
+        .strftime("%m-%d %H:%M:%S")
         if n
         else "-"
     )
@@ -448,7 +450,7 @@ def status(db):
 
 def atomic(path, content):
     tmp = path.with_suffix(path.suffix + "." + str(os.getpid()) + ".tmp")
-    tmp.write_text(content)
+    tmp.write_text(content, encoding="utf-8")
     tmp.chmod(0o600)
     tmp.replace(path)
 
@@ -560,7 +562,7 @@ def report(db):
 
 
 def log(value):
-    with (ROOT / "collector.jsonl").open("a") as f:
+    with (ROOT / "collector.jsonl").open("a", encoding="utf-8") as f:
         f.write(
             json.dumps({"time": date(time.time()), **value}, ensure_ascii=False) + "\n"
         )
@@ -942,6 +944,10 @@ def run(argv=None):
 
 
 def main():
+    if os.name == "nt":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     try:
         run()
     except KeyboardInterrupt:
