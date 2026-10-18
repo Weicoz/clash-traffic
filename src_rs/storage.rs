@@ -145,38 +145,87 @@ fn unlock(file: &File) {
 }
 
 #[cfg(windows)]
-unsafe extern "C" {
-    /// CRT：HANDLE → 文件描述符（-1 表示失败）。
-    fn _get_osfhandle(handle: isize) -> isize;
-    /// CRT：字节范围加锁；mode 2 = 非阻塞独占，0 = 解锁。
-    fn _locking(fd: i32, mode: i32, nbytes: i32) -> i32;
+#[repr(C)]
+struct Overlapped {
+    internal: usize,
+    internal_high: usize,
+    offset: u32,
+    offset_high: u32,
+    event: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl Overlapped {
+    /// 锁第 0 字节起的 1 字节：与 Python `seek(0)` + `locking(fd, LK_NBLCK, 1)` 的范围重叠。
+    fn at_first_byte() -> Overlapped {
+        Overlapped {
+            internal: 0,
+            internal_high: 0,
+            offset: 0,
+            offset_high: 0,
+            event: std::ptr::null_mut(),
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" {
+    /// 字节范围锁；带 LOCKFILE_FAIL_IMMEDIATELY 时立即失败而不等待。
+    #[link_name = "LockFileEx"]
+    fn lock_file_ex(
+        handle: *mut std::ffi::c_void,
+        flags: u32,
+        reserved: u32,
+        bytes_low: u32,
+        bytes_high: u32,
+        overlapped: *mut Overlapped,
+    ) -> i32;
+    #[link_name = "UnlockFileEx"]
+    fn unlock_file_ex(
+        handle: *mut std::ffi::c_void,
+        reserved: u32,
+        bytes_low: u32,
+        bytes_high: u32,
+        overlapped: *mut Overlapped,
+    ) -> i32;
 }
 
 /// 尝试对锁文件加独占非阻塞锁（等价 Python `msvcrt.locking(LK_NBLCK)`）。
+///
+/// 直接调 LockFileEx：CRT 的 `_locking` 内部就是它，字节范围互斥因此与 Python 采集器互通。
+/// 不得改回 `_get_osfhandle` + `_locking`——前者的方向是 fd → HANDLE，把 HANDLE 当 fd
+/// 喂给 `_locking` 会落到 CRT 的无效参数处理，进程静默 fast-fail（0xC0000409，无任何输出）。
 #[cfg(windows)]
 fn try_lock(file: &File) -> bool {
-    use std::io::{Seek, SeekFrom};
     use std::os::windows::io::AsRawHandle;
-    const LK_NBLCK: i32 = 2;
-    // Python 在加锁前 seek(0)：CRT 按当前文件位置锁定字节范围，
-    // 不归零就会锁到写完 "0" 之后的偏移，与 Python 采集器互不排斥。
-    let _ = (&*file).seek(SeekFrom::Start(0));
-    let fd = unsafe { _get_osfhandle(file.as_raw_handle() as isize) };
-    fd != -1 && unsafe { _locking(fd as i32, LK_NBLCK, 1) } == 0
+    const LOCKFILE_FAIL_IMMEDIATELY: u32 = 0x0000_0001;
+    const LOCKFILE_EXCLUSIVE_LOCK: u32 = 0x0000_0002;
+    let mut overlapped = Overlapped::at_first_byte();
+    unsafe {
+        lock_file_ex(
+            file.as_raw_handle() as *mut std::ffi::c_void,
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        ) != 0
+    }
 }
 
 /// 释放锁（等价 Python `msvcrt.locking(LK_UNLCK)`）。
 #[cfg(windows)]
 fn unlock(file: &File) {
-    use std::io::{Seek, SeekFrom};
     use std::os::windows::io::AsRawHandle;
-    const LK_UNLCK: i32 = 0;
-    let _ = (&*file).seek(SeekFrom::Start(0));
-    let fd = unsafe { _get_osfhandle(file.as_raw_handle() as isize) };
-    if fd != -1 {
-        unsafe {
-            _locking(fd as i32, LK_UNLCK, 1);
-        }
+    let mut overlapped = Overlapped::at_first_byte();
+    unsafe {
+        unlock_file_ex(
+            file.as_raw_handle() as *mut std::ffi::c_void,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        );
     }
 }
 

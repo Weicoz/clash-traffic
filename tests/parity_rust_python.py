@@ -133,7 +133,8 @@ def run_case(launcher, data_dir, port, rounds=3):
         argv = launcher + ["watch", "--once", "--interval", "0.5", "--data-dir", data_dir]
         proc = subprocess.run(argv, env=env, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120)
-        outs.append({"rc": proc.returncode, "err": proc.stderr.strip()})
+        outs.append({"rc": proc.returncode, "err": proc.stderr.strip(),
+                     "out": proc.stdout.strip()})
     return {"rounds": outs, "requests": list(requests_seen)}
 
 
@@ -227,6 +228,30 @@ def normalize_tsv(lines):
     return [head, [row.split("\t") for row in rows]]
 
 
+def print_round_diagnostics(case, label):
+    """子进程异常退出时把 stdout/stderr 打出来：否则 CI 只剩一个退出码可看。"""
+    for index, round_info in enumerate(case["rounds"]):
+        if round_info["rc"] == 0 and not round_info["err"]:
+            continue
+        print("  %s 轮%d rc=%s" % (label, index, round_info["rc"]))
+        if round_info["err"]:
+            print("    stderr: %s" % round_info["err"][:800])
+        if round_info.get("out"):
+            print("    stdout: %s" % round_info["out"][:300])
+
+
+def finish(report):
+    failed = [name for name, ok, _ in report if not ok]
+    print("\n=== 对拍结果: %d 项, 不一致 %d 项 ===" % (len(report), len(failed)))
+    for name, ok, _ in report:
+        print("  %s %s" % ("一致  " if ok else "不一致", name))
+    if failed:
+        print("真实分歧: %s" % ", ".join(failed))
+        return 1
+    print("Rust 与 Python 实现行为一致")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -256,6 +281,15 @@ def main():
                 [r["err"] for r in py_case["rounds"]])
         compare(report, "控制接口请求路径", rust_case["requests"], py_case["requests"])
         compare(report, "产物文件", sorted(os.listdir(rust_dir)), sorted(os.listdir(py_dir)))
+        db_name = "traffic.sqlite3"
+        if not all(os.path.exists(os.path.join(d, db_name)) for d in (rust_dir, py_dir)):
+            # 采集进程没起来时账本根本不存在，后面每一步都会抛无关异常，先把真正的现场打出来。
+            print("账本缺失: rust=%s python=%s" % (
+                os.path.exists(os.path.join(rust_dir, db_name)),
+                os.path.exists(os.path.join(py_dir, db_name))))
+            print_round_diagnostics(rust_case, "rust")
+            print_round_diagnostics(py_case, "python")
+            return finish(report)
         rust_db, py_db = db_snapshot(rust_dir), db_snapshot(py_dir)
         for table in ("connections", "segments", "buckets", "totals"):
             compare(report, "账本 %s" % table, rust_db[table], py_db[table])
@@ -291,15 +325,7 @@ def main():
         server.shutdown()
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)
-    failed = [name for name, ok, _ in report if not ok]
-    print("\n=== 对拍结果: %d 项, 不一致 %d 项 ===" % (len(report), len(failed)))
-    for name, ok, _ in report:
-        print("  %s %s" % ("一致  " if ok else "不一致", name))
-    if failed:
-        print("真实分歧: %s" % ", ".join(failed))
-        return 1
-    print("Rust 与 Python 实现行为一致")
-    return 0
+    return finish(report)
 
 
 if __name__ == "__main__":
