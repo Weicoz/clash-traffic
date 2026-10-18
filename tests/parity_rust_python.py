@@ -27,6 +27,11 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Windows 里指向管道的 stdout 默认是 cp1252，直接 print 中文会 UnicodeEncodeError。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DATE_CELL = re.compile(r"\d\d-\d\d \d\d:\d\d:\d\d")
 DURATION_CELL = re.compile(r"\d+\.\d+s")
 CSV_NOISY = {8, 9, 10}  # first / last / closed
@@ -110,27 +115,34 @@ def python_launcher(repo):
     return [sys.executable, "-c", code]
 
 
+def child_env(**extra):
+    """子进程环境: 管道必须按 UTF-8 编解码, 否则 Windows 上中文输出失败。"""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", **extra)
+    env.pop("CLASH_SECRET", None)
+    return env
+
+
 def run_case(launcher, data_dir, port, rounds=3):
     global requests_seen
     shutil.rmtree(data_dir, ignore_errors=True)
-    env = dict(os.environ, CLASH_TRAFFIC_HOME=data_dir,
-               CLASH_CONTROLLER="http://127.0.0.1:%d" % port)
-    env.pop("CLASH_SECRET", None)
+    env = child_env(CLASH_TRAFFIC_HOME=data_dir,
+                    CLASH_CONTROLLER="http://127.0.0.1:%d" % port)
     requests_seen = []
     outs = []
     for _ in range(rounds):
         argv = launcher + ["watch", "--once", "--interval", "0.5", "--data-dir", data_dir]
-        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=120)
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120)
         outs.append({"rc": proc.returncode, "err": proc.stderr.strip()})
     return {"rounds": outs, "requests": list(requests_seen)}
 
 
 def cli(launcher, data_dir, port, args):
-    env = dict(os.environ, CLASH_TRAFFIC_HOME=data_dir,
-               CLASH_CONTROLLER="http://127.0.0.1:%d" % port)
-    env.pop("CLASH_SECRET", None)
+    env = child_env(CLASH_TRAFFIC_HOME=data_dir,
+                    CLASH_CONTROLLER="http://127.0.0.1:%d" % port)
     proc = subprocess.run(launcher + list(args) + ["--data-dir", data_dir], env=env,
-                          capture_output=True, text=True, timeout=120)
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
     return proc
 
 

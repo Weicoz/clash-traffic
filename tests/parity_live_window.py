@@ -6,8 +6,17 @@
 两个实现各采集 3 轮（2 轮 watch --once 建账本 + 1 轮 monitor --once 渲染实时窗口），
 逐单元格比较渲染结果。仅比对内容：终端超长截断（rust 追加 "..."）与数字右对齐属文档化
 展示增强，按「前缀相等 + 去空白对齐」处理。非 Unix 平台自动跳过（pty 依赖）。"""
-import json, os, pty, re, select, struct, subprocess, sys, termios, fcntl, threading, time, shutil, tempfile
+import json, os, re, select, struct, subprocess, sys, threading, time, shutil, tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Windows 的 pty 模块一导入就抛 ImportError，Unix 专属模块必须延迟到平台判断之后。
+if os.name == "posix":
+    import fcntl, pty, termios
+
+# 指向管道的 stdout 默认是 cp1252，直接 print 中文会 UnicodeEncodeError。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 def conn(cid, host, up, down, rule="DIRECT", chains=None, ctype="HTTP"):
     return {"id": cid, "upload": up, "download": down, "start": "1970-01-01T00:16:40Z",
@@ -138,4 +147,5 @@ def main():
                     print("   行%d\n     rs: %r\n     py: %r" % (i, a, b))
     return 0 if same else 1
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
