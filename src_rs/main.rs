@@ -145,11 +145,7 @@ fn main() {
     let cli = Cli::parse();
     if cli.dry_run {
         let paths = resolve_paths(&cli);
-        println!(
-            "{{\"dry_run\": true, \"command\": \"{}\", \"data_dir\": \"{}\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}}",
-            cli.command.name(),
-            paths.root.to_string_lossy()
-        );
+        println!("{}", dry_run_payload(&cli, &paths));
         return;
     }
     if let Err(message) = validate(&cli) {
@@ -198,6 +194,15 @@ fn resolve_paths(cli: &Cli) -> Paths {
         Some(dir) => Paths::with_root(dir.clone()),
         None => Paths::default_paths(),
     }
+}
+
+/// dry-run 只看将要做的事与目标目录：不触网、不读凭据、不写状态。
+fn dry_run_payload(cli: &Cli, paths: &Paths) -> String {
+    format!(
+        "{{\"dry_run\": true, \"command\": \"{}\", \"data_dir\": \"{}\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}}",
+        cli.command.name(),
+        paths.root.to_string_lossy()
+    )
 }
 
 fn run(cli: &Cli) -> Result<()> {
@@ -709,10 +714,30 @@ mod tests {
 
     #[test]
     fn dry_run_shape_and_validation_message() {
-        let cli = Cli::parse_from(["clash-traffic", "self-test", "--data-dir", "/tmp/x"]);
+        // 期望值必须来自平台的绝对路径：POSIX 字面量 "/tmp/x" 在 Windows 上属于
+        // 「当前盘符下的根路径」，with_root 会补成 D:/tmp/x（Rust 的 join 语义）。
+        let dir = std::env::temp_dir().join("clash-traffic-dry-run");
+        let dir_text = dir.to_string_lossy().into_owned();
+        let cli = Cli::parse_from(["clash-traffic", "self-test", "--data-dir", &dir_text]);
         let paths = resolve_paths(&cli);
-        assert_eq!(paths.root, PathBuf::from("/tmp/x"));
-        assert_eq!(paths.db, PathBuf::from("/tmp/x/traffic.sqlite3"));
+        assert_eq!(paths.root, dir);
+        assert_eq!(paths.db, dir.join("traffic.sqlite3"));
+        let payload = dry_run_payload(&cli, &paths);
+        assert!(
+            payload.starts_with("{\"dry_run\": true, \"command\": \"self-test\", \"data_dir\": \"")
+        );
+        assert!(payload.contains(&dir_text));
+        assert!(payload
+            .ends_with("\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}"));
+        // 相对路径必须按当前目录绝对化。
+        let relative = resolve_paths(&Cli::parse_from([
+            "clash-traffic",
+            "status",
+            "--data-dir",
+            "relative-dir",
+        ]));
+        assert!(relative.root.is_absolute());
+        assert!(relative.root.ends_with("relative-dir"));
         assert!(validate(&cli).is_ok());
         let bad = Cli::parse_from(["clash-traffic", "status", "--interval", "0.1"]);
         assert_eq!(
