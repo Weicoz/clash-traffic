@@ -275,7 +275,7 @@ pub struct StatusFields {
     pub report: String,
 }
 
-fn json_string(value: &str) -> String {
+pub(crate) fn json_string(value: &str) -> String {
     serde_json::to_string(&Value::String(value.to_string())).unwrap_or_else(|_| "\"\"".into())
 }
 

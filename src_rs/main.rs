@@ -198,10 +198,12 @@ fn resolve_paths(cli: &Cli) -> Paths {
 
 /// dry-run 只看将要做的事与目标目录：不触网、不读凭据、不写状态。
 fn dry_run_payload(cli: &Cli, paths: &Paths) -> String {
+    // 路径必须按 JSON 规则转义：Windows 的 "C:\\Users\\..." 直接插值会产出非法 JSON
+    // （CI 的 windows runner 上 json.loads 报 Invalid \escape）。
     format!(
-        "{{\"dry_run\": true, \"command\": \"{}\", \"data_dir\": \"{}\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}}",
-        cli.command.name(),
-        paths.root.to_string_lossy()
+        "{{\"dry_run\": true, \"command\": {}, \"data_dir\": {}, \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}}",
+        models::json_string(cli.command.name()),
+        models::json_string(&paths.root.to_string_lossy())
     )
 }
 
@@ -729,6 +731,17 @@ mod tests {
         assert!(payload.contains(&dir_text));
         assert!(payload
             .ends_with("\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}"));
+        // 路径里的反斜杠必须转义：Windows 下不转义就不是合法 JSON，Python 侧 json.loads 会直接失败。
+        let escaped =
+            Cli::parse_from(["clash-traffic", "status", "--data-dir", "C:\\Users\\runner"]);
+        let escaped_paths = resolve_paths(&escaped);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&dry_run_payload(&escaped, &escaped_paths))
+                .expect("dry-run 输出必须是合法 JSON");
+        assert_eq!(
+            parsed["data_dir"].as_str().unwrap(),
+            escaped_paths.root.to_string_lossy()
+        );
         // 相对路径必须按当前目录绝对化。
         let relative = resolve_paths(&Cli::parse_from([
             "clash-traffic",

@@ -317,10 +317,21 @@ def main():
         print("report.html 字节数: rust %d / python %d (展示增强, 不比较)" % (rust_bytes, py_bytes))
         for argv in (["watch", "--dry-run"], ["monitor", "--dry-run"],
                      ["report", "--dry-run", "--by", "rule"], ["status", "--dry-run"]):
-            rust_out = json.loads(cli(rust_launcher, rust_dir, port, argv).stdout)
-            py_out = json.loads(cli(py_launcher, py_dir, port, argv).stdout)
+            label = "dry-run %s" % " ".join(argv)
+            rust_text = cli(rust_launcher, rust_dir, port, argv).stdout
+            py_text = cli(py_launcher, py_dir, port, argv).stdout
+            try:
+                rust_out = json.loads(rust_text)
+                py_out = json.loads(py_text)
+            except json.JSONDecodeError as exc:
+                # 解析失败不是「取值不同」而是「根本不是 JSON」：给出命令与原文，别只丢一个 traceback。
+                print("%s 输出不是合法 JSON: %s" % (label, exc))
+                print("  rust  : %s" % rust_text.strip()[:200])
+                print("  python: %s" % py_text.strip()[:200])
+                report.append((label, False, ""))
+                continue
             rust_out.pop("data_dir"), py_out.pop("data_dir")
-            compare(report, "dry-run %s" % " ".join(argv), rust_out, py_out)
+            compare(report, label, rust_out, py_out)
     finally:
         server.shutdown()
         if not args.keep:
