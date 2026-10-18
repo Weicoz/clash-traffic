@@ -728,7 +728,12 @@ mod tests {
         assert!(
             payload.starts_with("{\"dry_run\": true, \"command\": \"self-test\", \"data_dir\": \"")
         );
-        assert!(payload.contains(&dir_text));
+        // data_dir 在 JSON 里是转义过的（Windows 路径带反斜杠），只能解码后比较，
+        // 不能拿裸路径做子串匹配。
+        let decoded: serde_json::Value =
+            serde_json::from_str(&payload).expect("dry-run 输出必须是合法 JSON");
+        assert_eq!(decoded["command"].as_str().unwrap(), "self-test");
+        assert_eq!(decoded["data_dir"].as_str().unwrap(), dir_text);
         assert!(payload
             .ends_with("\", \"network_calls\": 0, \"credential_reads\": 0, \"state_writes\": 0}"));
         // 路径里的反斜杠必须转义：Windows 下不转义就不是合法 JSON，Python 侧 json.loads 会直接失败。
