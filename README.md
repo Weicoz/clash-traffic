@@ -1,6 +1,6 @@
 # Clash Traffic
 
-为 **Clash 兼容核心**提供本地流量账本、实时终端表格和 HTML 报表。Python 3.10+，运行时零第三方依赖，适配 macOS、Linux、Windows。
+为 **Clash 兼容核心**提供本地流量账本、实时终端表格和 HTML 报表。提供两个等价实现：Rust 原生二进制（`src_rs/`）与 Python 3.10+ 零第三方依赖脚本（`src/`）。两者共用同一 SQLite 账本格式，命令、选项、环境变量一致，适配 macOS、Linux、Windows。
 
 同一域名换规则或节点后**分行累计**，不把旧流量归到新节点。同一连接 ID 的规则、链、协议变化也会分段保存。
 
@@ -37,6 +37,43 @@ python -m venv .venv
 ```
 
 安装提供 `clash-traffic` 和兼容别名 `bett-traffic`；不需要 Ruby、系统管理员权限或修改代理路由。尚未发布 PyPI，请使用上述 Git 安装地址。
+### Rust 原生实现
+
+Rust 实现位于 `src_rs/`，只用 `std` 加 `rusqlite`（bundled SQLite）、`ureq`、`clap`、`serde`、`chrono`、`libc`；运行时不依赖 Python 或系统 SQLite。
+
+```bash
+cargo build --release          # 产物 target/release/clash-traffic
+cargo test --release           # 单元测试
+target/release/clash-traffic self-test
+install -m 0755 target/release/clash-traffic ~/.local/bin/clash-traffic
+```
+
+macOS 替换已安装的二进制后要重新做本地签名（否则 Gatekeeper 拦截）：
+
+```bash
+rm -f ~/.local/bin/clash-traffic
+cp target/release/clash-traffic ~/.local/bin/clash-traffic
+codesign --force --sign - ~/.local/bin/clash-traffic
+```
+
+两个实现共用同一数据目录与账本；同一时刻只允许一份采集器（`collector.lock` 互斥，跨实现同样生效）。切换实现前先 `clash-traffic stop` 或等采集器退出。
+
+与 Python 版的差别只在展示层，数值、分组与账本完全一致：
+
+- 数字列右对齐：HTML 加 `class="num"`，终端左补空格。
+- 每张分组表末尾加一行 `<p class="meta">共 N 行</p>`。
+- 明细表标题写实际行数（Python 固定写「最近 500 条」）。
+- 终端超长单元格截断后加 `...`；列数不为 8 时按实际列数分配列宽。
+- 终端输出兜底过滤控制字符，避免核心元数据注入转义序列。
+
+行为对拍（CI 会执行）：
+
+```bash
+cargo build --release
+python tests/parity_rust_python.py
+```
+
+脚本起本地 mock Clash `/connections` 服务，让两个实现采集同一快照序列，逐项比较 SQLite 账本、`status` JSON、`report --by` 六个维度、`report.html` 单元格、`export` CSV 与 `--dry-run` 输出；墙钟时间戳与时长列按噪声忽略。
 
 ## 配置与一条命令开始
 
@@ -103,7 +140,7 @@ HTML 报表在数据目录的 `report.html`，每5秒生成，浏览器每5秒�
 | `uploadTotal/downloadTotal` | 核心累计增量参考，不等同域名累计或账单 |
 | `connections: null` | 作为空连接列表处理；无`connections`字段则拒绝快照 |
 
-已进行 Bettbox/Mihomo 真实 API 采集；基础 Clash 字段及字段缺失情况有离线测试。CI覆盖三种操作系统、Python 3.10/3.14。未逐一实测 Clash Verge Rev、FlClash、ClashX、Clash for Windows、OpenClash 等客户端，不把协议兼容说成所有客户端均已验收。Loon、Shadowrocket、sing-box 私有接口不在此协议范围内。
+已进行 Bettbox/Mihomo 真实 API 采集；基础 Clash 字段及字段缺失情况有离线测试。CI 覆盖三种操作系统：Python 3.10/3.14 跑单元测试与 `self-test`，Rust 跑 `fmt`/`clippy`/`test` 与双实现对拍。未逐一实测 Clash Verge Rev、FlClash、ClashX、Clash for Windows、OpenClash 等客户端，不把协议兼容说成所有客户端均已验收。Loon、Shadowrocket、sing-box 私有接口不在此协议范围内。
 
 官方依据：[Mihomo API](https://wiki.metacubex.one/api/)、[连接接口源码](https://github.com/MetaCubeX/mihomo/blob/Meta/hub/route/connections.go)、[Tracker字段源码](https://github.com/MetaCubeX/mihomo/blob/Meta/tunnel/statistic/tracker.go)。
 
@@ -124,6 +161,14 @@ HTML 报表在数据目录的 `report.html`，每5秒生成，浏览器每5秒�
 python -m pip install -e .
 python -m unittest discover -s tests -v
 clash-traffic self-test
+
+# Rust 实现
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --release
+cargo build --release
+python tests/parity_rust_python.py    # 双实现对拍（账本/报表/CSV/dry-run）
+python tests/parity_live_window.py   # 实时窗口渲染对拍（pty，非 Unix 自动跳过）
 ```
 
 数据库自动兼容早期本地 Bettbox 流量账本：首次连接会把已有连接导入分段表，保留旧字节、时间、规则与链。移植旧数据前停旧采集、用SQLite备份；不得把配置/数据库/日志/导出文件放进源码仓库。
