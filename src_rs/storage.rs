@@ -203,7 +203,7 @@ fn try_lock(file: &File) -> bool {
     let mut overlapped = Overlapped::at_first_byte();
     unsafe {
         lock_file_ex(
-            file.as_raw_handle() as *mut std::ffi::c_void,
+            file.as_raw_handle(),
             LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
             0,
             1,
@@ -219,13 +219,7 @@ fn unlock(file: &File) {
     use std::os::windows::io::AsRawHandle;
     let mut overlapped = Overlapped::at_first_byte();
     unsafe {
-        unlock_file_ex(
-            file.as_raw_handle() as *mut std::ffi::c_void,
-            0,
-            1,
-            0,
-            &mut overlapped,
-        );
+        unlock_file_ex(file.as_raw_handle(), 0, 1, 0, &mut overlapped);
     }
 }
 
